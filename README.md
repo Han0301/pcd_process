@@ -27,7 +27,7 @@ flowchart LR
 
 LAS 提供完整三维几何，METABAG 提供时序筛选所需的逐帧观测。**`Preview.pcd` 仅用于预览，不作为完整数据输入。**
 
-### 本轮优化带来的变化
+### 融合原始帧数据的优化
 
 ![点云处理优化前后：左为优化前，右为原始数据完整重算后](docs/images/processing-before-after.png)
 
