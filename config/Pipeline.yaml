@@ -1,0 +1,222 @@
+ROOT_DIR: ..  # [关键] 项目根目录；相对本 YAML 所在目录解析
+run:  # 批次与输出目录设置
+  batch_name: four_scans_20261027_06_raw  # [关键] 批次目录名；重跑使用新名称，禁止覆盖已有结果
+  experiment_name: ''                     # 正式运行为空，试验填写新的目录名
+  scan_name: old22                        # 当前单云名称，按输入依次修改
+RunPointCloudPipeline:  # 单云 Run 入口的路径与流程开关
+  input_pcd: '{PreprocessPointCloud.input_pcd}'  # 输入 PCD 路径，可填绝对路径或路径占位符
+  output_dir: '{SCAN_DIR}'                       # 输出目录，运行时拒绝覆盖已有目录
+  enable_temporal_filter: true                   # [关键] 独立单云的时序开关；RunDataset 固定启用
+  export_grid_input: false                       # 是否额外生成单云二维投影输入
+  auto_stream_threshold_bytes: 200000000         # 超过此字节数且无旁文件时自动启用分块处理
+PreprocessPointCloud:  # 预处理模块：体素、离群点与大文件处理
+  input_pcd: '{WORK_DIR}/00_input/{SCAN_NAME}.pcd'                # 输入 PCD 路径，可填绝对路径或路径占位符
+  output_dir: '{RunPointCloudPipeline.output_dir}/01_preprocess'  # 输出目录，运行时拒绝覆盖已有目录
+  parameters:  # 本模块算法参数，Run 入口也使用这一组值
+    voxel_size: 0.05     # [关键] 体素边长，米；0 表示不降采样
+    statistical: false   # [关键] 预处理是否做 SOR；注意与导图滤波位置区分
+    nb_neighbors: 20     # 统计滤波使用的邻点数
+    std_ratio: 2.0       # 统计滤波标准差倍数
+    save_removed: false  # 是否保存无效点、滤除点和体素合并记录
+    streaming: false     # 是否强制启用大 PCD 分块体素化
+ExtractGround:  # 地面模块：法向、主平面、局部支持与调平
+  input_pcd: '{PreprocessPointCloud.output_dir}/cleaned.pcd'  # 输入 PCD 路径，可填绝对路径或路径占位符
+  output_dir: '{RunPointCloudPipeline.output_dir}/02_ground'  # 输出目录，运行时拒绝覆盖已有目录
+  parameters:  # 本模块算法参数，Run 入口也使用这一组值
+    apply_leveling: true              # [关键] 是否按估计主地面整体调平
+    ground_tolerance: 0.06            # 地面相对局部地面允许的高度误差，米
+    min_obstacle_height: 0.1          # 障碍物相对地面的最低高度，米
+    max_obstacle_height: 1.8          # 障碍物相对地面的最高高度，米
+    min_raw_count: 1                  # 体素代表点至少对应的原始点数
+    adapt_unit_raw_count: true        # 对全部计数为 1 的来源将计数门槛适配为 1
+    sample_stride: 24                 # 估计地面法向时的抽样步长
+    max_normal_samples: 400000        # 地面法向估计最大抽样点数
+    normal_neighbors: 16              # 水平结构法向估计邻点数
+    min_normal_z: 0.9                 # 水平结构法向 Z 分量绝对值下限
+    max_curvature: 0.02               # 水平结构局部曲率上限
+    histogram_bin_size: 0.08          # 低位候选高度直方图分箱宽度，米
+    low_bucket_size: 1.0              # 低位候选 XY 桶边长，米
+    low_quantile: 0.2                 # 每个 XY 桶的低位高度分位数
+    low_fit_quantile: 0.65            # 主平面拟合使用的低位候选高度分位范围
+    plane_fit_tolerance: 0.06         # 地面主平面拟合距离门槛，米
+    plane_normal_angle: 3.0           # 种子法向与主平面法向最大夹角，度
+    min_relative_plane_support: 0.35  # 主平面相对最强候选的最小支持比例
+    ransac_iterations: 350            # RANSAC 最大迭代次数
+    min_seed_points: 30               # 地面主平面最少种子点数
+    min_seed_cells: 6                 # 地面主平面最少支持格数
+    min_seed_span: 1.0                # 地面种子在 X 和 Y 方向的最小跨度，米
+    local_grid_size: 0.5              # 局部地面模型的 XY 格尺寸，米
+    local_min_seeds: 3                # 局部地面格最少种子点数
+    local_max_distance: 0.75          # 点到有效地面支持格中心的最大距离，米
+    local_max_plane_deviation: 0.25   # 局部地面偏离主平面的最大高度，米
+    random_seed: 20261027             # 地面算法随机种子
+CropPointCloud:  # 裁剪模块：显式范围或地面分位范围
+  input_pcd: '{ExtractGround.output_dir}/leveled.pcd'       # 输入 PCD 路径，可填绝对路径或路径占位符
+  output_dir: '{RunPointCloudPipeline.output_dir}/03_crop'  # 输出目录，运行时拒绝覆盖已有目录
+  parameters:  # 本模块算法参数，Run 入口也使用这一组值
+    mode: none                    # 裁剪策略：none / bounds / quantile_xy
+    bounds: null                  # bounds 模式的 [[xmin,ymin,zmin],[xmax,ymax,zmax]]，米
+    xy_quantiles: [0.001, 0.999]  # 地面 XY 下分位和上分位，取值 0 到 1
+    xy_padding: 1.0               # 分位范围外额外保留的距离，米
+    resolution: 0.05              # 栅格或覆盖计算的分辨率，米
+TemporalFilter:  # 可选时序筛选；融合前逐份运行，不自动识别人或玻璃
+  input_pcd: '{ExtractGround.output_dir}/leveled.pcd'           # 输入 PCD 路径，可填绝对路径或路径占位符
+  frames_csv: '{PrepareTemporalFrames.output_dir}/frames.csv'   # 帧到当前裁剪后/调平坐标系的位姿与质量 CSV
+  output_dir: '{RunPointCloudPipeline.output_dir}/04_temporal'  # 输出目录，运行时拒绝覆盖已有目录
+  parameters:  # 本模块算法参数，Run 入口也使用这一组值
+    mode: apply                      # [关键] review 只标记；apply 按候选实际剔除
+    horizontal_guard_dilation: 0.12  # 水平结构保护向邻近点扩张距离，米
+    protected_bounds_transform_file: '{ExtractGround.output_dir}/T_input_to_level.npy'  # [关键] 保护框到当前云的矩阵；null 表示已在当前坐标
+    ray_max_hit_frames: 4            # 射线候选允许的命中帧上限
+    sparse_filter: true              # [关键] 启用弱命中与低密度联合排除，不等同于确认运动
+    sparse_raw_count_max: 2          # 稀疏候选体素最多对应原始点数
+    sparse_max_hit_frames: 1         # 稀疏候选最多被合格帧命中的次数
+    sparse_nearest_distance: 0.1     # 最近另一体素距离下限，米
+    sparse_eighth_distance: 0.25     # 含自身的第8邻点距离下限，米
+    sparse_stable_distance: 0.2      # 与多视角稳定结构的距离下限，米
+    ground_z: 0.0                    # 当前处理云的固定地面 Z，米
+    protected_bounds: &old22_protection         # [关键] 保护框为 xmin,xmax,ymin,ymax,zmin,zmax；按变换文件处理
+    - - 19.022149833044683           
+      - 21.491257109344467   
+      - -2.3851003123547927  
+      - 0.4990710801592456   
+      - -0.9792608996214551  
+      - 1.7247058432512272   
+    - - 17.11370786316257  
+      - 17.69115973931776    
+      - -3.106954696124915   
+      - -1.868824005621237   
+      - -0.9701363756267828  
+      - 1.700159340326803    
+    - - 0.3430504387649014  
+      - 0.8576469950986272   
+      - 31.813110843043972   
+      - 34.048927697604135   
+      - -0.7096462180366991  
+      - 0.9856005027188295   
+    protect_horizontal: true  # 是否保护局部水平结构
+    hit_radius: 0.075         # [关键] 帧点与当前云匹配的距离上限，米
+    independent_views: 3      # [关键] 独立见证数，取值 1 到 255
+    min_origin_distance: 0.6  # 独立见证的最小原点间距，米
+    min_time_distance: 2.0    # 独立见证的最小时间间隔，秒
+    ray_distance: 0.04        # 候选点到实际射线的横向距离门槛，米
+    endpoint_margin: 0.3      # 实际端点须超过候选点的距离，米
+    frame_range: [0.3, 30.0]  # 单帧原始点允许的距离范围，米
+    query_range: [0.5, 20.0]  # 当前候选点到帧原点的距离范围，米
+    max_plane_p95: 0.075      # 可用于射线证据的点面残差 P95 上限，米
+    max_nn_p95: 0.15          # 留出最近邻距离 95 分位上限，米
+    ground_guard_height: 0.3  # [关键] 近地面自动保护的高度范围，米
+    normal_neighbors: 16      # 水平结构法向估计邻点数
+    normal_radius: 0.3        # 水平结构保护的邻域最大半径，米
+    min_normal_z: 0.9         # 水平结构法向 Z 分量绝对值下限
+    max_curvature: 0.02       # 水平结构局部曲率上限
+    protected_fields:  # 参与保护的逐点布尔属性名
+    - ground_mask                           
+    - thin_structure_guard                  
+    - optical_ambiguity_guard               
+    - floor_like_guard                      
+    - horizontal_structure_proximity_guard  
+    - multiview_geometry_guard              
+    - structural_guard                      
+    - mirror_reference_protected            
+    - floor_multilayer_ambiguity            
+    - temporal_protected                    
+PrepareGridInput:  # 投影输入：局部相对高度或共同坐标真实高度
+  input_pcd: '{RunPointCloudPipeline.output_dir}/processed.pcd'   # 输入 PCD 路径，可填绝对路径或路径占位符
+  output_dir: '{RunPointCloudPipeline.output_dir}/05_grid_input'  # 输出目录，运行时拒绝覆盖已有目录
+  parameters:  # 本模块算法参数，Run 入口也使用这一组值
+    normalize_local_ground: true  # [关键] Z 是否归一到局部地面；global_height 必须为 false
+    selection_mode: local_ground  # [关键] local_ground 局部支持；global_height 全局真实高度
+    coordinate_transform: null    # [关键] 输入到投影共同坐标的 4×4 刚体矩阵
+    bounds: null                  # [关键] 投影坐标的 2×3 裁剪范围，米；null 保留全部
+PcdtoGridMap:  # 地图模块：栅格、高度阈值与图像输出
+  input_pcd: '{PrepareGridInput.output_dir}/grid_input.pcd'  # 输入 PCD 路径，可填绝对路径或路径占位符
+  output_dir: '{RESULT_DIR}/map'                             # 输出目录，运行时拒绝覆盖已有目录
+  parameters:  # 本模块算法参数，Run 入口也使用这一组值
+    map_name: map                    # 输出地图文件名，不含扩展名
+    resolution: 0.05                 # [关键] 地图栅格边长，米
+    ground_z: 0.0                    # [关键] 投影坐标中的地面 Z，米；null 表示自动估计
+    ground_tolerance: 0.06           # 相对 ground_z 的地面高度容差，米
+    min_obstacle_height: 0.1         # [关键] 障碍物相对 ground_z 的最低高度，米
+    max_obstacle_height: 1.8         # [关键] 障碍物相对 ground_z 的最高高度，米
+    min_obstacle_points: 1           # 栅格判为障碍物的最少点数
+    inflation_radius: 0.0            # 地图障碍物膨胀半径，米
+    unknown_as_free: true            # [关键] true 将未知栅格写为空闲；仅为导出策略
+    use_statistical_filter: false    # [关键] 本次导图前是否做 SOR，不改输入参考云
+    statistical_nb_neighbors: 20     # 导图统计滤波的邻点数
+    statistical_std_ratio: 1.8       # [关键] 导图 SOR 标准差倍数，越小通常筛除越多
+    ground_histogram_bin_size: 0.02  # 自动估计地面高度的直方图分箱宽度，米
+LastoPcd:  # LAS 转 PCD 模块
+  input_las: data/old22/colorized-realtime.las  # 输入 LAS 文件的绝对路径
+  output_pcd: '{PreprocessPointCloud.input_pcd}'  # 输出 PCD 路径
+  pcd_data_format: binary                         # PCD 保存格式：binary 或 ascii
+PcdtoPly:  # PCD 转 PLY 预览模块
+  input_pcd: '{RunPointCloudPipeline.output_dir}/processed.pcd'  # 输入 PCD 路径，可填绝对路径或路径占位符
+  output_dir: '{SCAN_DIR}/preview'                               # 输出目录，运行时拒绝覆盖已有目录
+  output_ply_name: processed.ply                                 # 预览 PLY 文件名
+  write_ascii: false                                             # 是否使用文本 PLY，false 为二进制
+  compressed: false                                              # 是否请求 PLY 压缩输出
+CheckPointCloudPipeline:  # 检查模块：来源、矩阵、选点与融合回滚
+  report_dir: '{RunPointCloudPipeline.output_dir}'  # 独立检查的流程报告所在目录
+  validation_name: validation.json                  # 检查结果 JSON 文件名
+  transform_atol: 1.0e-10                           # 检查变换后坐标的绝对误差容限，米
+PrepareTemporalFrames:  # 原始 data 准备：解码、去畸变、帧定位、来源核验
+  enabled: true                                               # [关键] 独立单云是否重算原始帧；RunDataset 固定启用
+  source_dir: data/old22                  # 本次原始录制目录，内部须含 data/data_*
+  input_pcd: '{PreprocessPointCloud.output_dir}/cleaned.pcd'  # 输入 PCD 路径，可填绝对路径或路径占位符
+  output_dir: '{WORK_DIR}/00_frames/{SCAN_NAME}'              # 输出目录，运行时拒绝覆盖已有目录
+  left_transform_file: '{ExtractGround.output_dir}/T_input_to_level.npy'  # RAW LAS 到本次调平坐标的矩阵，由 ExtractGround 生成
+  allow_free_space: true                                      # [关键] 允许合格帧作射线见证；仍须质量和结构保护
+  parameters:  # 本模块算法参数，Run 入口也使用这一组值
+    frame_period: 0.5  # LIO 去畸变帧导出间隔，秒
+    duration: 0.0      # 读取录制时长，秒；0 表示完整录制
+    build_jobs: 2      # 首次构建项目内 LIO 源码的并发数
+RunDataset:  # 完整批次入口，所有输入与初值均显式配置
+  register_config: '{ROOT_DIR}/config/Register.yaml'  # 多份配准模板；单份不读取此文件
+  scans:  # 按顺序处理的原始录制；矩阵仅作初值，仍须通过配准验收
+  - name: old22  # 录制名称，对应本批次的单云目录
+    input_las: data/old22/colorized-realtime.las  # [关键] 本录制的原始 LAS 路径
+    allow_free_space: true    # [关键] 本录制是否允许合格帧作射线见证
+    protected_bounds: *old22_protection  # [关键] 本录制 RAW LAS 坐标中的保护框，米
+    initial_raw_to_reference:  # [关键] 多份配准的 RAW 初值；单份不使用，可省略
+    - [-0.04147208040147706, 0.9991176358730715, -0.006634473204056448, 0.032164969356005595]  
+    - [-0.9991393672027963, -0.041466042717748036, 0.0010450867053915193, 0.6722651096567746]  
+    - [0.0007690592090856211, 0.006672105278698368, 0.9999774455254989, -0.004959403332285506]  
+    - [0.0, 0.0, 0.0, 1.0]  
+  - name: full  # 录制名称，对应本批次的单云目录
+    input_las: data/full/colorized-realtime.las  # [关键] 本录制的原始 LAS 路径
+    allow_free_space: false  # [关键] 本录制是否允许合格帧作射线见证
+    protected_bounds: []     # [关键] 本录制 RAW LAS 坐标中的保护框，米
+    initial_raw_to_reference:  # [关键] 多份配准的 RAW 初值；单份不使用，可省略
+    - [1.0, 0.0, 0.0, 0.0]  
+    - [0.0, 1.0, 0.0, 0.0]  
+    - [0.0, 0.0, 1.0, 0.0]  
+    - [0.0, 0.0, 0.0, 1.0]  
+  - name: local_01  # 录制名称，对应本批次的单云目录
+    input_las: data/local_01/colorized-realtime.las  # [关键] 本录制的原始 LAS 路径
+    allow_free_space: false  # [关键] 本录制是否允许合格帧作射线见证
+    protected_bounds: []     # [关键] 本录制 RAW LAS 坐标中的保护框，米
+    initial_raw_to_reference:  # [关键] 多份配准的 RAW 初值；单份不使用，可省略
+    - [0.774108145709033, 0.6330513275161084, 0.0016110484212455483, 30.41042578966083]  
+    - [-0.6330496867328763, 0.7741098158757519, -0.0014446772012593296, -14.052427321097731]  
+    - [-0.002161683216826785, 9.8462691033991e-05, 0.9999976587126433, 0.4730983551727106]  
+    - [0.0, 0.0, 0.0, 1.0]  
+  - name: local_02  # 录制名称，对应本批次的单云目录
+    input_las: data/local_02/colorized-realtime.las  # [关键] 本录制的原始 LAS 路径
+    allow_free_space: false  # [关键] 本录制是否允许合格帧作射线见证
+    protected_bounds: []     # [关键] 本录制 RAW LAS 坐标中的保护框，米
+    initial_raw_to_reference:  # [关键] 多份配准的 RAW 初值；单份不使用，可省略
+    - [0.8423043734159977, 0.5390019230776301, 0.0005190788920354578, 29.331791213258693]  
+    - [-0.5390014226175768, 0.8423044171361911, -0.0008574899957732515, -21.361785879335258]  
+    - [-0.0008994112003452483, 0.0004424833123424137, 0.9999994976338817, -0.05094379557164741]  
+    - [0.0, 0.0, 0.0, 1.0]  
+  parameters:  # 本模块算法参数，Run 入口也使用这一组值
+    reference_scan: full  # [关键] 多份参考录制；单份自动使用自身
+    reference_raw_to_map:  # [关键] 多份投影坐标变换；单份使用 PrepareGridInput 参数
+    - [0.0034898766809112382, -0.9999801745803797, 0.0052412982118197095, 0.6000000000000003]  
+    - [0.9999938666645435, 0.0034913780687668644, 0.0002773309867140302, -5.722045877121218e-07]  
+    - [-0.0002956248421394592, 0.005240298214236121, 0.9999862258454256, 1.0224775414228118]  
+    - [0.0, 0.0, 0.0, 1.0]                
+    export_preview: true                  # 是否从最终融合点云导出 PLY 预览
+    map_quarter_turns: 1                  # [关键] 当前仅支持 1，即逆时针 90°，不插值
+    map_translation_xy: [24.325, -3.975]  # [关键] 旋转后地图原点的 XY 平移，米

@@ -1,0 +1,8 @@
+# Python 3.11：与已验证的点云运行环境一致。
+numpy==2.4.6
+scipy==1.17.1
+open3d==0.20.0
+laspy==2.7.0
+PyYAML==6.0.3
+Pillow==12.3.0
+matplotlib==3.11.1

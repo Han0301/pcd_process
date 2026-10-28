@@ -1,0 +1,19 @@
+原始 METABAG 准备脚本的构建与硬件约定
+
+Python 依赖、运行方式和参数入口统一见项目根目录 README.md。
+
+构建：
+  原始 data 处理需要 CMake、C++17、Eigen、PCL、Python 3.12 开发库、
+  ROS 2 Jazzy 和 livox_ros_driver2 消息包。
+  RawData/prepare.py 的 build() 按源码指纹构建本目录内的离线 FAST-LIO。
+  build/raw_fastlio/ 是可重建的编译产物，不保存原始帧定位缓存。
+  当前 CMake 前缀含 /opt/ros/jazzy 与 /home/h/lidar_ws/install/livox_ros_driver2；
+  跨环境使用前检查 build() 中的 Python 开发库及 ROS / Livox 路径。
+
+硬件：
+  [关键] 离线适配器当前按 MID-360 配置，T_L_in_I=[-0.011,-0.02329,0.04412]，R=I。
+  参数定义在 fast_lio/src/offline_laser_mapping.cpp，实际运行值记录在各次
+  lio/run_config.json、lio/run_summary.json。更换设备时须核对录制标定。
+  Tools/CollectResult.py 会核对原始 info/calibration.json 与本次 LIO 外参。
+
+上游代码的许可保留在 fast_lio/LICENSE。

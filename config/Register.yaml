@@ -1,0 +1,125 @@
+ROOT_DIR: ..  # [关键] 项目根目录；相对本 YAML 所在目录解析
+run:  # 批次与输出目录设置
+  batch_name: four_scans_20261027_06_raw  # [关键] 批次目录名；重跑使用新名称，禁止覆盖已有结果
+  experiment_name: ''                     # 正式运行为空，试验填写新的目录名
+RunRegistration:  # 配准 Run 入口的任务顺序与流程开关
+  initial_transform: null        # 公共处理后 source→target 初值；null 自动搜索
+  fuse_after_registration: true  # 配准通过后是否融合；连续任务必须为 true
+  export_map: true               # [关键] 是否导出地图；RunDataset 需要为 true
+  jobs:  # 按列表顺序执行的逐轮配准任务
+  - name: step_01_old22  # 配准任务名称
+    source: '{SCAN_ROOT}/old22/processed.pcd'  # 待移动的处理后完整 PCD
+    target: '{SCAN_ROOT}/full/processed.pcd'   # 参考 PCD；previous 复用上一轮实际融合输出
+    initial_transform: '{WORK_DIR}/00_input/initials/T_old22_to_full.npy'  # [关键] 本轮处理后 source→target 初值；null 继承公共值
+    parameters:  # 本模块算法参数，Run 入口也使用这一组值
+      fit_mode: classified  # classified 使用分类证据；all_finite 使用全部有限点
+    fusion_parameters:  # 仅覆盖本轮的融合参数，其余继承融合模块
+      priority: first  # [关键] first 前输入优先；last 后输入优先
+    output_dir: '{REGISTRATION_ROOT}/step_01_old22'  # 输出目录，运行时拒绝覆盖已有目录
+  - name: step_02_local01  # 配准任务名称
+    source: '{SCAN_ROOT}/local_01/processed.pcd'       # 待移动的处理后完整 PCD
+    target: previous                                   # 参考 PCD；previous 复用上一轮实际融合输出
+    initial_transform: '{WORK_DIR}/00_input/initials/T_local_01_to_full.npy'  # [关键] 本轮处理后 source→target 初值；null 继承公共值
+    parameters: {}                                     # 本模块算法参数，Run 入口也使用这一组值
+    fusion_parameters: {}                              # 仅覆盖本轮的融合参数，其余继承融合模块
+    output_dir: '{REGISTRATION_ROOT}/step_02_local01'  # 输出目录，运行时拒绝覆盖已有目录
+  - name: step_03_local02  # 配准任务名称
+    source: '{SCAN_ROOT}/local_02/processed.pcd'  # 待移动的处理后完整 PCD
+    target: previous                              # 参考 PCD；previous 复用上一轮实际融合输出
+    initial_transform: '{WORK_DIR}/00_input/initials/T_local_02_to_full.npy'  # [关键] 本轮处理后 source→target 初值；null 继承公共值
+    parameters:  # 本模块算法参数，Run 入口也使用这一组值
+      fit_mode: all_finite  # classified 使用分类证据；all_finite 使用全部有限点
+    fusion_parameters: {}                              # 仅覆盖本轮的融合参数，其余继承融合模块
+    output_dir: '{REGISTRATION_ROOT}/step_03_local02'  # 输出目录，运行时拒绝覆盖已有目录
+RegisterPointClouds:  # 配准模块：粗配准、ICP、独立留出与验收
+  source_pcd: '{SCAN_ROOT}/old22/processed.pcd'  # 待移动的处理后完整 PCD 路径
+  target_pcd: '{SCAN_ROOT}/full/processed.pcd'   # 参考完整 PCD 路径
+  output_dir: '{JOB_DIR}/01_registration'        # 输出目录，运行时拒绝覆盖已有目录
+  initial_transform: '{WORK_DIR}/00_input/initials/T_old22_to_full.npy'  # [关键] 独立配准的处理后 source→target 初值或矩阵文件
+  parameters:  # 本模块算法参数，Run 入口也使用这一组值
+    seed: 20261027                         # 配准随机种子
+    coarse_voxel: 0.05                     # FPFH 粗配准的体素尺寸，米
+    icp_voxels: [0.05]                     # 各级 ICP 体素尺寸列表，米
+    icp_distances: [0.15]                  # 各级 ICP 最大对应距离列表，米；与尺度等长
+    ransac_iterations: 50000               # RANSAC 最大迭代次数
+    max_fit_points: 1000000                # 每份训练云最多参与拟合的点数
+    max_feature_points: 40000              # 每份粗配准云最多计算特征的点数
+    max_holdout_points: 50000              # 源云独立留出最多点数
+    max_target_holdout_points: 1000000     # 目标独立留出最多点数
+    holdout_block: 0.5                     # 源云训练和留出分块的边长，米
+    min_overlap: 0.5                       # [关键] 留出源云的最小匹配比例
+    max_nn_rmse: 0.08                      # [关键] 留出最近邻 RMSE 上限，米
+    max_nn_p95: 0.14                       # [关键] 留出最近邻距离 P95 上限，米
+    max_plane_rmse: 0.05                   # [关键] 留出点面 RMSE 上限，米
+    min_observable_rank: 6                 # 刚体配准可观测性秩下限，完整六自由度为 6
+    max_information_condition: 10000000.0  # 法向信息矩阵条件数上限
+    check_stability: true                  # [关键] 六轴扰动稳定性检查；关闭时不能通过验收
+    perturb_translation: 0.1               # 稳定性检查施加的平移扰动，米
+    perturb_rotation_deg: 1.0              # 稳定性检查施加的旋转扰动，度
+    max_stability_translation: 0.04        # 扰动重优化后的最大平移偏差，米
+    max_stability_rotation_deg: 0.5        # 扰动重优化后的最大旋转偏差，度
+    global_yaw_search: true                # 是否增加已调平云的全角 yaw 与 XY 搜索
+    yaw_grid_resolution: 0.05              # yaw 搜索二维栅格分辨率，米
+    yaw_step_deg: 3.0                      # yaw 搜索角度步长，度
+    global_icp_candidates: 16              # 全局候选最多进入 ICP 精配准的数量
+    min_global_score_gap: 0.03             # 最优与不同次优候选的最小相对评分差
+    min_fit_raw_count: 1                   # 参与拟合证据点的最少原始计数
+    fit_mode: classified                   # classified 使用分类证据；all_finite 使用全部有限点
+    normal_radius: 0.3                     # 配准法向估计的最小邻域半径，米
+    normal_max_neighbors: 40               # 配准法向估计的最大邻点数
+    icp_huber_delta: 0.05                  # ICP Huber 鲁棒损失尺度，米
+    max_holdout_curvature: 0.02            # 留出点面残差采用的最大局部曲率
+    icp_iterations: 60                     # 每个 ICP 尺度的最大迭代次数
+    stability_iterations: 35               # 每次稳定性扰动重优化的最大迭代次数
+FusePointClouds:  # 融合模块：覆盖替换、去重与回滚
+  input_pcds: ['{RegisterPointClouds.target_pcd}', '{RegisterPointClouds.output_dir}/aligned.pcd']  # 已对齐的输入 PCD 列表，按优先级规则融合
+  output_dir: '{JOB_DIR}/02_fusion'  # 输出目录，运行时拒绝覆盖已有目录
+  registration_reports: [null, '{RegisterPointClouds.output_dir}/registration_report.json']  # 与输入对应的配准报告；参考云位置填 null
+  parameters:  # 本模块算法参数，Run 入口也使用这一组值
+    priority: last            # [关键] first 前输入优先；last 后输入优先
+    resolution: 0.05          # [关键] 覆盖范围计算的栅格边长，米
+    coverage_halo: 0.1        # [关键] 新观测覆盖范围额外扩张的距离，米
+    dedup_distance: 0.075     # [关键] 旧点与新观测去重的近邻距离，米
+    already_aligned: false    # 是否显式确认所有输入已在共同坐标系
+    fill_missing_color: null  # 混合有色无色源时的 RGB 填充值，null 禁止自动填充
+PrepareGridInput:  # 投影输入：局部相对高度或共同坐标真实高度
+  input_pcd: '{RESULT_DIR}/cloud/fused.pcd'  # 输入 PCD 路径，可填绝对路径或路径占位符
+  output_dir: '{WORK_DIR}/03_grid_input'     # 输出目录，运行时拒绝覆盖已有目录
+  parameters:  # 本模块算法参数，Run 入口也使用这一组值
+    normalize_local_ground: false  # [关键] Z 是否归一到局部地面；global_height 必须为 false
+    selection_mode: global_height  # [关键] local_ground 局部支持；global_height 全局真实高度
+    coordinate_transform:  # [关键] 输入到投影共同坐标的 4×4 刚体矩阵
+    - [0.0034904537780940095, -0.999993884860042, -0.00021673703893953472, 0.6002269638594219]  # 列表按顺序配置
+    - [0.9999939061751881, 0.0034904394019271597, 6.667286100080372e-05, -7.03910501595756e-05]  # 列表按顺序配置
+    - [-6.591594578635565e-05, -0.00021696843672156622, 0.9999999742898925, -0.024707815989281734]  # 列表按顺序配置
+    - [0.0, 0.0, 0.0, 1.0]  # 列表按顺序配置
+    bounds:  # [关键] 投影坐标的 2×3 裁剪范围，米；null 保留全部
+    - [-11.0, -15.35, -0.5]  # 列表按顺序配置
+    - [40.45, 38.0, 4.85]    # 列表按顺序配置
+PcdtoGridMap:  # 地图模块：栅格、高度阈值与图像输出
+  input_pcd: '{PrepareGridInput.output_dir}/grid_input.pcd'  # 输入 PCD 路径，可填绝对路径或路径占位符
+  output_dir: '{RESULT_DIR}/map'                             # 输出目录，运行时拒绝覆盖已有目录
+  parameters:  # 本模块算法参数，Run 入口也使用这一组值
+    map_name: map                    # 输出地图文件名，不含扩展名
+    resolution: 0.05                 # [关键] 地图栅格边长，米
+    ground_z: 0.0                    # [关键] 投影坐标中的地面 Z，米；null 表示自动估计
+    ground_tolerance: 0.06           # 相对 ground_z 的地面高度容差，米
+    min_obstacle_height: 0.28        # [关键] 障碍物相对 ground_z 的最低高度，米
+    max_obstacle_height: 2.0         # [关键] 障碍物相对 ground_z 的最高高度，米
+    min_obstacle_points: 1           # 栅格判为障碍物的最少点数
+    inflation_radius: 0.0            # 地图障碍物膨胀半径，米
+    unknown_as_free: true            # [关键] true 将未知栅格写为空闲；仅为导出策略
+    use_statistical_filter: true     # [关键] 本次导图前是否做 SOR，不改输入参考云
+    statistical_nb_neighbors: 20     # 导图统计滤波的邻点数
+    statistical_std_ratio: 1.8       # [关键] 导图 SOR 标准差倍数，越小通常筛除越多
+    ground_histogram_bin_size: 0.02  # 自动估计地面高度的直方图分箱宽度，米
+PcdtoPly:  # PCD 转 PLY 预览模块
+  input_pcd: '{RESULT_DIR}/cloud/fused.pcd'  # 输入 PCD 路径，可填绝对路径或路径占位符
+  output_dir: '{RESULT_DIR}/preview'         # 输出目录，运行时拒绝覆盖已有目录
+  output_ply_name: fused.ply                 # 预览 PLY 文件名
+  write_ascii: false                         # 是否使用文本 PLY，false 为二进制
+  compressed: false                          # 是否请求 PLY 压缩输出
+CheckPointCloudPipeline:  # 检查模块：来源、矩阵、选点与融合回滚
+  report_dir: '{JOB_DIR}'           # 独立检查的流程报告所在目录
+  validation_name: validation.json  # 检查结果 JSON 文件名
+  transform_atol: 1.0e-10           # 检查变换后坐标的绝对误差容限，米
