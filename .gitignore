@@ -1,0 +1,24 @@
+# 运行产物与本地构建
+/run/
+/build/
+/data/
+/RawData/fast_lio/Log/
+*.pcd
+*.ply
+*.las
+*.laz
+*.bin
+*.npz
+*.pgm
+*.log
+
+# Python 与检查工具缓存
+__pycache__/
+*.py[cod]
+.ruff_cache/
+.pytest_cache/
+.venv/
+
+# 本机编辑器设置
+.vscode/
+.DS_Store
